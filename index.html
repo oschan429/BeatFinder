@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BeatFinder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a href="#" class="logo" id="homeLink">
+      <span class="logo-mark">◉</span> BeatFinder
+    </a>
+  </header>
+
+  <main>
+    <!-- 검색 화면 -->
+    <section class="hero" id="hero">
+      <p class="eyebrow">ELECTRONIC MUSIC DISCOVERY</p>
+      <h1>좋아하는 곡을 알려주세요.<br><span class="accent">비슷한 곡 3개</span>를 찾아드릴게요.</h1>
+      <p class="sub">애플뮤직의 모든 곡을 검색할 수 있어요. 미리듣기 음원을 직접 분석해서 속도(BPM), 베이스, 에너지, 음색, 장르를 비교하고, <b>2020년 이후 발매곡</b> 중에서 골라 드려요.</p>
+
+      <form class="search" id="searchForm" autocomplete="off">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="searchInput" type="text" placeholder="곡 제목 또는 아티스트 (예: Strobe, Daft Punk)" aria-label="곡 검색">
+          <button type="submit" class="btn-primary">추천받기</button>
+        </div>
+        <ul class="suggestions" id="suggestions" role="listbox" hidden></ul>
+      </form>
+      <p class="status" id="searchStatus" hidden></p>
+
+      <div class="examples">
+        <span>이런 곡은 어때요?</span>
+        <div id="exampleChips"></div>
+      </div>
+    </section>
+
+    <!-- DB에 없는 곡일 때 -->
+    <section class="fallback" id="fallback" hidden>
+      <h2>"<span id="fallbackQuery"></span>"</h2>
+      <p class="sub"><span id="fallbackReason"></span> 이 곡의 느낌을 대략 알려주면, 그 느낌에 맞춰 추천해 드릴게요.</p>
+      <div class="fallback-grid">
+        <label>장르 계열
+          <select id="fbGenre"></select>
+        </label>
+        <label>속도 <output id="fbBpmOut">125</output> BPM
+          <input type="range" id="fbBpm" min="70" max="180" value="125">
+        </label>
+        <label>베이스 강조 <output id="fbBassOut">6</output>/10
+          <input type="range" id="fbBass" min="1" max="10" value="6">
+        </label>
+        <label>에너지 <output id="fbEnergyOut">7</output>/10
+          <input type="range" id="fbEnergy" min="1" max="10" value="7">
+        </label>
+      </div>
+      <div class="mood-pick" id="fbMoods"></div>
+      <button class="btn-primary" id="fbSubmit">이 느낌으로 추천받기</button>
+    </section>
+
+    <!-- 분석 중 -->
+    <section class="loading" id="loading" hidden>
+      <div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <p id="loadingText">분석 중…</p>
+      <div class="bar"><div id="loadingBar"></div></div>
+      <p class="hint">처음 분석하는 곡은 10~20초 정도 걸려요. 한 번 분석한 곡은 기억해 두어서 다음엔 빨라요.</p>
+    </section>
+
+    <!-- 결과 화면 -->
+    <section class="results" id="results" hidden>
+      <div class="seed" id="seedCard"></div>
+      <h2 class="results-title">이 곡과 비슷한 추천곡</h2>
+      <div class="rec-grid" id="recGrid"></div>
+      <p class="note">BPM·베이스·에너지·밝기는 30초 미리듣기 음원을 브라우저에서 직접 분석한 값이라 실제와 조금 다를 수 있어요. 추천곡은 2020년 이후 발매곡만 보여드려요.</p>
+    </section>
+  </main>
+
+  <footer class="foot">BeatFinder · 미리듣기 제공: iTunes Search API · 전체 듣기는 Spotify / YouTube에서</footer>
+
+  <script src="data.js"></script>
+  <script src="curated-apple.js"></script>
+  <script src="analyzer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
