@@ -103,6 +103,7 @@ function fromApple(r) {
     artist: r.artistName,
     year: yearOf(r),
     appleGenre: r.primaryGenreName,
+    album: r.collectionName,
     preview: r.previewUrl || null,
     art: (r.artworkUrl100 || "").replace("100x100bb", "400x400bb"),
     thumb: r.artworkUrl60 || r.artworkUrl100,
@@ -129,6 +130,7 @@ function fromDeezer(r) {
     artist: r.artist.name,
     year: null,
     appleGenre: null,
+    album: r.album.title,
     preview: r.preview || null,
     art: r.album.cover_big || r.album.cover_medium,
     thumb: r.album.cover_small,
@@ -377,7 +379,7 @@ function compare(seed, cand) {
   return { score, reasons };
 }
 
-function recommend(seed, candidates, n = 3) {
+function recommend(seed, candidates, n = 5) {
   const ranked = candidates
     .map((t) => ({ track: t, ...compare(seed, t) }))
     .sort((a, b) => b.score - a.score);
@@ -545,6 +547,7 @@ function show(sections) {
   ["#hero", "#fallback", "#loading", "#results", "#guide"].forEach((id) => { $(id).hidden = true; });
   sections.forEach((id) => { $(id).hidden = false; });
   document.body.classList.toggle("compact", sections.length > 1);
+  document.body.classList.remove("searching");
 }
 
 function setProgress(text, ratio) {
@@ -575,7 +578,7 @@ async function runRecommendation(seed) {
   if (myRun !== runId) return;
 
   renderSeed(seed);
-  renderRecs(seed, recommend(seed, candidates));
+  renderRecs(seed, recommend(seed, candidates, 5));
   show(["#hero", "#results"]);
   wireCards($("#results"));
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -598,27 +601,61 @@ function setStatus(text) {
 }
 const RATE_MSG = "음악 검색 서버가 응답하지 않아요. 인터넷 연결을 확인하거나, 요청이 많았다면 1분쯤 뒤에 다시 시도해 주세요.";
 
+// 커버·자장가·8비트 버전처럼 원곡이 아닌 곡을 알아보는 단어들
+const COVER_RE = /8[\s-]?bit|music box|lullaby|lullabies|tribute|cover|karaoke|made famous|in the style of|rockabye|twinkle twinkle|vitamin string|piano version|kids/i;
+
+// 검색어와 얼마나 맞는지 점수: 제목·아티스트가 검색어에 들어 있으면 위로, 커버·리믹스는 아래로
+function suggestionScore(t, q) {
+  const words = new Set(norm(q).split(" "));
+  const has = (s) => { const w = norm(s).split(" ").filter(Boolean); return w.length > 0 && w.every((x) => words.has(x)); };
+  let s = 0;
+  if (has(baseTitle(t.title))) s += 3;
+  if (has(firstArtist(t.artist))) s += 2;
+  if (COVER_RE.test(`${t.title} ${t.artist} ${t.album || ""}`)) s -= 10;
+  if (VERSION_RE.test(t.title)) s -= 3;
+  return s;
+}
+
 // 실패하면 null
 async function fetchSuggestions(q) {
-  const results = IS_IOS ? await deezerSearch(q) : await itunesSearch(q, { limit: 15 });
+  const results = IS_IOS ? await deezerSearch(q) : await itunesSearch(q, { limit: 25 });
   if (!results) return null;
   const seen = new Set();
   return results
     .map(IS_IOS ? fromDeezer : fromApple)
     .filter((t) => t.preview && !JUNK_RE.test(t.title))
+    .map((t) => ({ t, s: suggestionScore(t, q) }))
+    .sort((a, b) => b.s - a.s)
+    .map(({ t }) => t)
     .filter((t) => {
       const k = trackKey(t);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     })
-    .slice(0, 7);
+    .slice(0, 15);
+}
+
+// 목록이 화면(휴대폰은 키보드 위 공간) 밖으로 나가지 않게 높이를 맞추고, 그 안에서 스크롤돼요
+function fitSuggestions() {
+  if (sugList.hidden) return;
+  const vv = window.visualViewport;
+  const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const room = bottom - sugList.getBoundingClientRect().top - 12;
+  sugList.style.maxHeight = `${Math.round(clamp(room, 200, 460))}px`;
+}
+if (window.visualViewport) window.visualViewport.addEventListener("resize", fitSuggestions);
+
+function setActive(i) {
+  sugIndex = i;
+  sugList.querySelectorAll("li").forEach((li, j) => li.classList.toggle("active", j === i));
+  if (sugList.children[i]) sugList.children[i].scrollIntoView({ block: "nearest" });
 }
 
 function renderSuggestions() {
   if (!sugItems.length || !input.value.trim()) { hideSuggestions(); return; }
   sugList.innerHTML = sugItems.map((t, i) => `
-    <li role="option" data-i="${i}" class="${i === sugIndex ? "active" : ""}">
+    <li role="option" data-i="${i}">
       ${t.thumb ? `<img src="${esc(t.thumb)}" alt="">` : `<span class="thumb-ph"></span>`}
       <span class="s-text">
         <span class="s-title">${esc(t.title)}</span>
@@ -627,12 +664,16 @@ function renderSuggestions() {
       <span class="s-genre">${esc(t.appleGenre || "")}</span>
     </li>`).join("");
   sugList.hidden = false;
+  sugList.scrollTop = 0;
+  fitSuggestions();
 }
 
 input.addEventListener("input", () => {
   clearTimeout(sugTimer);
   const q = input.value.trim();
-  if (!q) { sugItems = []; hideSuggestions(); return; }
+  if (!q) { sugItems = []; hideSuggestions(); document.body.classList.remove("searching"); return; }
+  // 휴대폰에서는 검색하는 동안 제목·설명을 숨겨서 목록이 들어갈 공간을 넓혀요
+  if (matchMedia("(max-width: 640px)").matches) document.body.classList.add("searching");
   if (q.length < 2) return;
   sugTimer = setTimeout(async () => {
     const req = ++sugReq;
@@ -645,17 +686,22 @@ input.addEventListener("input", () => {
 });
 input.addEventListener("keydown", (e) => {
   if (sugList.hidden) return;
-  if (e.key === "ArrowDown") { e.preventDefault(); sugIndex = (sugIndex + 1) % sugItems.length; renderSuggestions(); }
-  else if (e.key === "ArrowUp") { e.preventDefault(); sugIndex = (sugIndex - 1 + sugItems.length) % sugItems.length; renderSuggestions(); }
+  if (e.key === "ArrowDown") { e.preventDefault(); setActive((sugIndex + 1) % sugItems.length); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); setActive((sugIndex - 1 + sugItems.length) % sugItems.length); }
   else if (e.key === "Escape") hideSuggestions();
 });
-sugList.addEventListener("mousedown", (e) => {
+// 누르는 순간이 아니라 탭(클릭)이 끝났을 때 골라요. 손가락으로 목록을 스크롤할 때는 선택되지 않아요.
+sugList.addEventListener("mousedown", (e) => { if (e.target.closest("li")) e.preventDefault(); });
+sugList.addEventListener("click", (e) => {
   const li = e.target.closest("li");
-  if (!li) return;
-  e.preventDefault();
-  pick(sugItems[+li.dataset.i]);
+  if (li) pick(sugItems[+li.dataset.i]);
 });
-input.addEventListener("blur", () => setTimeout(hideSuggestions, 100));
+// 키보드를 내려도 목록은 남겨 두고, 검색창 밖을 누르면 닫아요
+document.addEventListener("pointerdown", (e) => {
+  if (sugList.hidden || e.target.closest("#searchForm")) return;
+  hideSuggestions();
+  document.body.classList.remove("searching");
+});
 
 function pick(t) {
   input.value = `${t.title} - ${t.artist}`;
