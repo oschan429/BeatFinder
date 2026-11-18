@@ -15,6 +15,10 @@
     <a href="#" class="logo" id="homeLink">
       <span class="logo-mark">◉</span> BeatFinder
     </a>
+    <nav class="tabs">
+      <a href="#" data-view="find" id="findTab">곡 추천</a>
+      <a href="#genres" data-view="genres">장르 설명</a>
+    </nav>
   </header>
 
   <main>
@@ -77,12 +81,20 @@
       <div class="rec-grid" id="recGrid"></div>
       <p class="note">BPM·베이스·에너지·밝기는 30초 미리듣기 음원을 브라우저에서 직접 분석한 값이라 실제와 조금 다를 수 있어요. 추천곡은 2020년 이후 발매곡만 보여드려요.</p>
     </section>
+
+    <!-- 장르 설명 -->
+    <section class="guide" id="guide" hidden>
+      <nav class="guide-nav" id="guideNav" aria-label="장르 목록"></nav>
+      <article class="guide-body" id="guideBody"></article>
+    </section>
   </main>
 
   <footer class="foot">BeatFinder · 미리듣기 제공: iTunes Search API · 전체 듣기는 Spotify / YouTube에서</footer>
 
   <script src="data.js"></script>
   <script src="curated-apple.js"></script>
+  <script src="genre-guide.js"></script>
+  <script src="genre-tracks.js"></script>
   <script src="analyzer.js"></script>
   <script src="app.js"></script>
 </body>

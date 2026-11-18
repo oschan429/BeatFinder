@@ -542,7 +542,7 @@ function wireCards(container) {
 }
 
 function show(sections) {
-  ["#hero", "#fallback", "#loading", "#results"].forEach((id) => { $(id).hidden = true; });
+  ["#hero", "#fallback", "#loading", "#results", "#guide"].forEach((id) => { $(id).hidden = true; });
   sections.forEach((id) => { $(id).hidden = false; });
   document.body.classList.toggle("compact", sections.length > 1);
 }
@@ -733,8 +733,12 @@ $("#exampleChips").addEventListener("click", (e) => {
   if (b) pick(CURATED_TRACKS.find((x) => x.id === b.dataset.ex));
 });
 
-$("#homeLink").addEventListener("click", (e) => {
+const setTab = (view) => document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on", a.dataset.view === view));
+
+function goHome(e) {
   e.preventDefault();
+  if (location.hash) history.pushState(null, "", location.pathname + location.search);
+  setTab("find");
   runId++;
   stopAudio();
   input.value = "";
@@ -742,8 +746,70 @@ $("#homeLink").addEventListener("click", (e) => {
   show(["#hero"]);
   window.scrollTo({ top: 0, behavior: "smooth" });
   input.focus();
+}
+$("#homeLink").addEventListener("click", goHome);
+$("#findTab").addEventListener("click", goHome);
+
+// ---------- 장르 설명 ----------
+const guideNav = $("#guideNav");
+guideNav.innerHTML = GENRE_GUIDE
+  .map((g) => `<a href="#genres/${g.key}" data-key="${g.key}">${g.name}<small>${g.en}</small></a>`).join("");
+
+function renderGuide(key) {
+  const g = GENRE_GUIDE.find((x) => x.key === key) || GENRE_GUIDE[0];
+  guideNav.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.key === g.key));
+  guideNav.querySelector(".on").scrollIntoView({ block: "nearest", inline: "center" });
+  const tracks = ((typeof GENRE_TRACKS !== "undefined" && GENRE_TRACKS[g.key]) || [])
+    .map((t, i) => ({ ...t, id: `g-${g.key}-${i}` }));
+  tracks.forEach((t) => trackRegistry.set(t.id, t));
+  $("#guideBody").innerHTML = `
+    <p class="eyebrow">${esc(g.en.toUpperCase())}</p>
+    <h2>${g.name}</h2>
+    <div class="chips">
+      <span class="chip">🕰️ ${g.born}</span>
+      <span class="chip">📍 ${g.where}</span>
+      <span class="chip">⏱️ ${g.bpm} BPM</span>
+    </div>
+    <p class="g-summary">${g.summary}</p>
+    <h3>역사</h3>
+    <ol class="timeline">${g.history.map((h) => `<li>${h}</li>`).join("")}</ol>
+    <h3>대표곡 미리듣기</h3>
+    <ul class="g-tracks">${tracks.map((t, i) => `
+      <li class="g-track">
+        <span class="g-num">${i + 1}</span>
+        ${t.art ? `<img src="${esc(t.art)}" alt="" loading="lazy">` : `<span class="thumb-ph"></span>`}
+        <span class="g-text"><b>${esc(t.title)}</b><span>${esc(t.artist)} · ${t.year}</span></span>
+        <button class="btn-play" data-preview="${t.id}" style="--p:0" aria-label="${esc(t.title)} 30초 미리듣기">
+          <span class="play-ring"></span><span class="label">30초 미리듣기</span>
+        </button>
+      </li>`).join("")}</ul>
+    <h3>하위 장르</h3>
+    <div class="chips">${g.sub.map((s) => `<span class="chip soft">${esc(s)}</span>`).join("")}</div>
+    <p class="g-source">장르 분류: <a href="https://en.wikipedia.org/wiki/List_of_electronic_music_genres" target="_blank" rel="noopener">Wikipedia · List of electronic music genres</a> · 미리듣기: Apple Music</p>`;
+  wireCards($("#guideBody"));
+}
+
+// #genres 또는 #genres/techno 주소면 장르 설명을 보여줘요
+function route() {
+  const m = location.hash.match(/^#genres(?:\/([\w-]+))?/);
+  setTab(m ? "genres" : "find");
+  if (!m) return false;
+  runId++;
+  stopAudio();
+  hideSuggestions();
+  renderGuide(m[1]);
+  show(["#guide"]);
+  window.scrollTo({ top: 0 });
+  return true;
+}
+window.addEventListener("hashchange", () => {
+  if (route()) return;
+  stopAudio();
+  show(["#hero"]);
 });
 
 renderExamples();
-show(["#hero"]);
-input.focus();
+if (!route()) {
+  show(["#hero"]);
+  input.focus();
+}
