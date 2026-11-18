@@ -48,6 +48,9 @@ function jsonp(url, timeout = 8000) {
   });
 }
 
+// 애플 검색 API는 아이폰에서 온 요청을 애플뮤직 앱으로 돌려보내서, 아이폰에서는 디저(Deezer)로 곡을 찾아요.
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
 // 애플 검색 API는 분당 약 20회로 제한돼 있어서, 결과를 하루 동안 기억해 둬요.
 const SEARCH_KEY = "bf_search_v1";
 const SEARCH_TTL = 24 * 60 * 60 * 1000;
@@ -61,6 +64,7 @@ async function itunesSearch(term, extra = {}) {
   const key = params.toString();
   const hit = searchCache[key];
   if (hit && Date.now() - hit.t < SEARCH_TTL) return hit.r;
+  if (IS_IOS) return null;
   const data = await jsonp(`https://itunes.apple.com/search?${params}`);
   if (!data) return null;
   const results = (data.results || []).map((r) => Object.fromEntries(KEEP_FIELDS.map((f) => [f, r[f]])));
@@ -109,6 +113,30 @@ function fromApple(r) {
   if (c) Object.assign(t, { curated: true, genre: c.genre, genreGuessed: false, mood: c.mood, moodAuto: false, vocal: c.vocal });
   else if (APPLE_GENRE_MAP[t.appleGenre]) Object.assign(t, { genre: APPLE_GENRE_MAP[t.appleGenre], genreGuessed: false });
   return t;
+}
+
+// 디저 검색은 아이폰에서만 써요. 발매연도와 장르는 주지 않아서, 장르는 아티스트와 소리로 추정해요.
+async function deezerSearch(q) {
+  const data = await jsonp(`https://api.deezer.com/search?${new URLSearchParams({ q, limit: 25, output: "jsonp" })}`);
+  if (!data || data.error) return null;
+  return data.data || [];
+}
+
+function fromDeezer(r) {
+  const t = {
+    id: `d${r.id}`,
+    title: r.title,
+    artist: r.artist.name,
+    year: null,
+    appleGenre: null,
+    preview: r.preview || null,
+    art: r.album.cover_big || r.album.cover_medium,
+    thumb: r.album.cover_small,
+    url: r.link,
+    curated: false, genre: null, genreGuessed: true, mood: [], moodAuto: true, vocal: null
+  };
+  // 큐레이션 곡이면 미리 계산해 둔 애플뮤직 정보와 분석값을 그대로 써요
+  return CURATED_TRACKS.find((c) => trackKey(c) === trackKey(t)) || t;
 }
 
 // 큐레이션 곡은 애플뮤직 정보와 분석값을 미리 계산해 둬서(curated-apple.js) 요청 없이 바로 써요.
@@ -455,7 +483,7 @@ function renderSeed(t) {
         <span class="chip">${f.bpm} BPM</span>
         ${t.mood.map((m) => `<span class="chip soft">${m}</span>`).join("")}
       </div>
-      <p class="genre-desc"><b>${g.name}</b>${hasBatchim(g.name) ? "이란" : "란"}?${g.desc}${t.genreGuessed ? " <span class='muted'>(애플뮤직 장르가 넓게 분류돼 있어서, 소리와 아티스트를 보고 추정했어요)</span>" : ""}</p>
+      <p class="genre-desc"><b>${g.name}</b>${hasBatchim(g.name) ? "이란" : "란"}?${g.desc}${t.genreGuessed ? " <span class='muted'>(장르 정보가 없거나 넓게 분류돼 있어서, 소리와 아티스트를 보고 추정했어요)</span>" : ""}</p>
       <div class="meters">
         ${meter("베이스", f.bass)}
         ${meter("에너지", f.energy)}
@@ -568,23 +596,23 @@ function setStatus(text) {
   $("#searchStatus").textContent = text || "";
   $("#searchStatus").hidden = !text;
 }
-const RATE_MSG = "애플뮤직이 응답하지 않아요. 인터넷 연결을 확인하거나, 요청이 많았다면 1분쯤 뒤에 다시 시도해 주세요.";
+const RATE_MSG = "음악 검색 서버가 응답하지 않아요. 인터넷 연결을 확인하거나, 요청이 많았다면 1분쯤 뒤에 다시 시도해 주세요.";
 
 // 실패하면 null
 async function fetchSuggestions(q) {
-  const results = await itunesSearch(q, { limit: 15 });
+  const results = IS_IOS ? await deezerSearch(q) : await itunesSearch(q, { limit: 15 });
   if (!results) return null;
   const seen = new Set();
   return results
-    .filter((r) => r.previewUrl && !JUNK_RE.test(r.trackName))
-    .filter((r) => {
-      const k = trackKey({ title: r.trackName, artist: r.artistName });
+    .map(IS_IOS ? fromDeezer : fromApple)
+    .filter((t) => t.preview && !JUNK_RE.test(t.title))
+    .filter((t) => {
+      const k = trackKey(t);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     })
-    .slice(0, 7)
-    .map(fromApple);
+    .slice(0, 7);
 }
 
 function renderSuggestions() {
