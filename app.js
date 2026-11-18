@@ -379,7 +379,7 @@ function compare(seed, cand) {
   return { score, reasons };
 }
 
-function recommend(seed, candidates, n = 5) {
+function recommend(seed, candidates, n = 6) {
   const ranked = candidates
     .map((t) => ({ track: t, ...compare(seed, t) }))
     .sort((a, b) => b.score - a.score);
@@ -578,7 +578,7 @@ async function runRecommendation(seed) {
   if (myRun !== runId) return;
 
   renderSeed(seed);
-  renderRecs(seed, recommend(seed, candidates, 5));
+  renderRecs(seed, recommend(seed, candidates, 6));
   show(["#hero", "#results"]);
   wireCards($("#results"));
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
