@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="dj.css">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -18,6 +19,7 @@
     <nav class="tabs">
       <a href="#" data-view="find" id="findTab">곡 추천</a>
       <a href="#genres" data-view="genres">장르 설명</a>
+      <a href="#dj" data-view="dj">DJ 연습</a>
     </nav>
   </header>
 
@@ -87,6 +89,9 @@
       <nav class="guide-nav" id="guideNav" aria-label="장르 목록"></nav>
       <article class="guide-body" id="guideBody"></article>
     </section>
+
+    <!-- DJ 연습 (내용은 dj.js가 만들어요) -->
+    <section class="dj" id="dj" hidden></section>
   </main>
 
   <footer class="foot">BeatFinder · 미리듣기 제공: iTunes Search API · 전체 듣기는 Spotify / YouTube에서</footer>
@@ -95,6 +100,8 @@
   <script src="curated-apple.js"></script>
   <script src="genre-guide.js"></script>
   <script src="genre-tracks.js"></script>
+  <script src="dj-tracks.js"></script>
+  <script src="dj.js"></script>
   <script src="analyzer.js"></script>
   <script src="app.js"></script>
 </body>

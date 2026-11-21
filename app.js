@@ -544,7 +544,7 @@ function wireCards(container) {
 }
 
 function show(sections) {
-  ["#hero", "#fallback", "#loading", "#results", "#guide"].forEach((id) => { $(id).hidden = true; });
+  ["#hero", "#fallback", "#loading", "#results", "#guide", "#dj"].forEach((id) => { $(id).hidden = true; });
   sections.forEach((id) => { $(id).hidden = false; });
   document.body.classList.toggle("compact", sections.length > 1);
   document.body.classList.remove("searching");
@@ -785,6 +785,7 @@ function goHome(e) {
   e.preventDefault();
   if (location.hash) history.pushState(null, "", location.pathname + location.search);
   setTab("find");
+  DJ.leave();
   runId++;
   stopAudio();
   input.value = "";
@@ -835,16 +836,23 @@ function renderGuide(key) {
   wireCards($("#guideBody"));
 }
 
-// #genres 또는 #genres/techno 주소면 장르 설명을 보여줘요
+// #genres(또는 #genres/techno)면 장르 설명, #dj면 DJ 연습을 보여줘요
 function route() {
   const m = location.hash.match(/^#genres(?:\/([\w-]+))?/);
-  setTab(m ? "genres" : "find");
-  if (!m) return false;
+  const dj = location.hash === "#dj";
+  setTab(m ? "genres" : dj ? "dj" : "find");
+  if (!dj) DJ.leave();
+  if (!m && !dj) return false;
   runId++;
   stopAudio();
   hideSuggestions();
-  renderGuide(m[1]);
-  show(["#guide"]);
+  if (dj) {
+    show(["#dj"]);
+    DJ.enter();
+  } else {
+    renderGuide(m[1]);
+    show(["#guide"]);
+  }
   window.scrollTo({ top: 0 });
   return true;
 }
