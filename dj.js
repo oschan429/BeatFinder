@@ -69,7 +69,7 @@ const DJ = (() => {
       Object.assign(this, {
         n, track: null, buffer: null, wave: null, overview: null, loading: false,
         playing: false, offset: 0, anchor: 0, tempo: 0, bend: 0, cue: 0, hot: [null, null, null, null],
-        src: null, pendingAlign: false, previewing: false, jog: null, level: 0
+        src: null, synced: false, previewing: false, jog: null, level: 0
       });
       this.vals = { hi: 0.5, mid: 0.5, low: 0.5, filter: 0.5, fader: 1 };
     }
@@ -77,7 +77,8 @@ const DJ = (() => {
     get bpm() { return this.track ? this.track.bpm * (1 + this.tempo) : 0; }
     get beat() { return 60 / this.track.bpm; }
     get duration() { return this.buffer ? this.buffer.duration : 0; }
-    pos() { return this.playing ? Math.min(this.duration, this.offset + (ctx.currentTime - this.anchor) * this.rate) : this.offset; }
+    // anchor가 미래면(SYNC로 첫 박을 기다리는 중) 아직 움직이지 않아요
+    pos() { return this.playing ? Math.min(this.duration, this.offset + Math.max(0, ctx.currentTime - this.anchor) * this.rate) : this.offset; }
     snap(t) { return Math.round(t / this.beat) * this.beat; } // 가까운 박에 맞추기 (퀀타이즈)
 
     // 믹서 채널: EQ(LOW·MID·HI) → 필터 → 채널 페이더 → 크로스페이더
@@ -116,19 +117,17 @@ const DJ = (() => {
     }
     // 속도를 바꾸기 전에 지금 위치를 기준점으로 다시 잡아야 위치 계산이 어긋나지 않아요
     change(fn) {
-      if (this.playing) { this.offset = this.pos(); this.anchor = ctx.currentTime; }
+      if (this.playing && ctx.currentTime > this.anchor) { this.offset = this.pos(); this.anchor = ctx.currentTime; }
       fn();
       if (this.src) this.src.playbackRate.setValueAtTime(this.rate, ctx.currentTime);
     }
-    play() {
+    play(align = true) {
       if (!this.buffer || this.playing) return;
       ensureCtx();
       if (this.offset >= this.duration - 0.05) this.offset = 0;
-      if (this.pendingAlign) {
-        this.pendingAlign = false;
-        const o = decks[1 - this.n];
-        if (o.playing) alignTo(this, o);
-      }
+      // SYNC가 켜져 있으면 상대 덱의 박자에 맞춰 시작해요
+      const o = decks[1 - this.n];
+      const wait = align && this.synced && !this.previewing && o.playing ? alignTo(this, o) : 0;
       const src = ctx.createBufferSource();
       src.buffer = this.buffer;
       src.playbackRate.value = this.rate;
@@ -137,8 +136,8 @@ const DJ = (() => {
         if (this.src !== src) return;
         this.offset = this.duration; this.playing = false; this.src = null;
       };
-      src.start(0, this.offset);
-      Object.assign(this, { src, anchor: ctx.currentTime, playing: true });
+      src.start(ctx.currentTime + wait, this.offset);
+      Object.assign(this, { src, anchor: ctx.currentTime + wait, playing: true });
     }
     pause() {
       if (!this.playing) return;
@@ -149,7 +148,7 @@ const DJ = (() => {
     }
     seek(t) {
       t = clamp(t, 0, Math.max(0, this.duration - 0.01));
-      if (this.playing) { this.pause(); this.offset = t; this.play(); } else this.offset = t;
+      if (this.playing) { this.pause(); this.offset = t; this.play(false); } else this.offset = t;
     }
     // CUE: 멈춘 상태에서 누르면 그 자리를 큐로 저장, 큐 위치에서 누르고 있으면 미리 듣기, 재생 중에 누르면 큐로 돌아가 멈춰요
     cueDown() {
@@ -179,14 +178,16 @@ const DJ = (() => {
   }
   const decks = [new Deck(0), new Deck(1)];
 
-  // 상대 덱과 마디의 첫 박까지 맞춰요 (4박 단위)
+  // 상대 덱과 마디의 첫 박까지 맞춰요 (4박 단위). 곡의 첫머리에서 조금 일찍 눌렀으면 기다릴 시간(초)을 돌려줘요
   function alignTo(d, o) {
     let diff = (o.pos() / o.beat - d.pos() / d.beat) % 4;
     if (diff > 2) diff -= 4;
     if (diff < -2) diff += 4;
     let t = d.pos() + diff * d.beat;
+    if (t < 0 && !d.playing) { d.seek(0); return -t / d.rate; }
     if (t < 0) t += 4 * d.beat;
     d.seek(t);
+    return 0;
   }
 
   function sync(d) {
@@ -195,7 +196,7 @@ const DJ = (() => {
     const tempo = clamp(o.bpm / d.track.bpm - 1, -RANGE, RANGE);
     ctl[`${d.n}.tempo`].set(tempo / (2 * RANGE) + 0.5);
     if (o.playing && d.playing) alignTo(d, o);
-    else if (o.playing) d.pendingAlign = true; // 이 덱을 재생하는 순간 박자를 맞춰요
+    d.synced = true; // 템포를 직접 바꾸기 전까지 켜져 있고, 재생하는 순간 박자를 맞춰요
     const btn = d.ui.sync;
     btn.classList.add("flash");
     setTimeout(() => btn.classList.remove("flash"), 400);
@@ -251,7 +252,7 @@ const DJ = (() => {
 
   async function load(d, def) {
     if (d.playing) { toast(`덱 ${d.n + 1}이 재생 중이라 곡을 바꿀 수 없어요. 먼저 멈춰 주세요.`); return; }
-    Object.assign(d, { track: def, buffer: null, wave: null, overview: null, loading: true, offset: 0, cue: 0, hot: [null, null, null, null], pendingAlign: false });
+    Object.assign(d, { track: def, buffer: null, wave: null, overview: null, loading: true, offset: 0, cue: 0, hot: [null, null, null, null], synced: false });
     d.ui.loading.hidden = false;
     setText(d.ui.title, def.title);
     renderLibrary();
@@ -335,6 +336,17 @@ const DJ = (() => {
       }
     });
     const xOf = (t) => (t - t0) * pps;
+    guideEvents(d).forEach((ev) => {
+      const x = xOf(ev.bar * 4 * d.beat);
+      if (x < -160 * dpr || x > W) return;
+      g.fillStyle = "#ff5fa2";
+      g.fillRect(x - dpr, 0, 2 * dpr, H);
+      g.font = `700 ${12 * dpr}px "Noto Sans KR", sans-serif`;
+      const w = g.measureText(ev.label).width + 12 * dpr;
+      g.fillRect(x, H - 20 * dpr, w, 20 * dpr);
+      g.fillStyle = "#1a0a12";
+      g.fillText(ev.label, x + 6 * dpr, H - 6 * dpr);
+    });
     d.hot.forEach((t, i) => { if (t != null) marker(g, xOf(t), H, HOT_COLORS[i], dpr); });
     marker(g, xOf(d.cue), H, "#ff8a00", dpr);
     g.fillStyle = "#fff";
@@ -350,6 +362,8 @@ const DJ = (() => {
     const x = xOf(d.pos());
     g.fillStyle = "rgba(6, 6, 11, .55)";
     g.fillRect(0, 0, x, H - 6 * (H / 64));
+    g.fillStyle = "#ff5fa2";
+    guideEvents(d).forEach((ev) => g.fillRect((ev.bar / DJ_BARS) * W - dpr / 2, 0, dpr, H));
     d.hot.forEach((t, i) => { if (t != null) { g.fillStyle = HOT_COLORS[i]; g.fillRect(xOf(t) - dpr / 2, 0, dpr, H); } });
     g.fillStyle = "#ff8a00";
     g.fillRect(xOf(d.cue) - dpr / 2, 0, dpr, H);
@@ -372,6 +386,7 @@ const DJ = (() => {
     setText(u.section, `${sec.name} · ${Math.max(1, Math.ceil(sec.to - beats / 4))}마디 남음`);
     u.section.style.color = sec.color;
     u.jogMark.style.transform = `rotate(${(p / SEC_PER_REV) * 360}deg)`;
+    u.sync.classList.toggle("on", d.synced);
     u.play.classList.toggle("on", d.playing);
     u.cue.classList.toggle("on", d.previewing || (!d.playing && Math.abs(p - d.cue) < 0.02));
     u.pads.forEach((b, i) => b.classList.toggle("set", d.hot[i] != null));
@@ -439,6 +454,7 @@ const DJ = (() => {
     });
     updatePhase();
     updateMeters();
+    guideTick(now);
   }
 
   function toast(msg) {
@@ -446,6 +462,431 @@ const DJ = (() => {
     ui.toast.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => ui.toast.classList.remove("show"), 2600);
+  }
+
+  // ---------- 전환 가이드 ----------
+  // 곡이 끝나갈 때 무엇을 해야 하는지 순서대로 알려주고, 만져야 할 조작부를 화면에서 빛나게 해요.
+  const GUIDE_STORE = "bf-dj-guide";
+  const PREP_BARS = 16;       // 다음 곡을 재생하기 몇 마디 전부터 준비를 안내할지
+  const TOL = 0.06;           // 노브·페이더를 이만큼 안으로 맞추면 된 것으로 봐요
+  const PLAY_STEP = 3;        // 0 곡 준비, 1 BPM, 2 세팅, 3 PLAY, 4~ 움직이기, 마지막은 마무리
+  const CTL_NAMES = { hi: "HI", mid: "MID", low: "LOW", filter: "FILTER", fader: "볼륨", tempo: "템포" };
+  const G = {
+    on: true, method: DJ_METHODS[0], out: null, idx: 0, started: false, res: {}, first: -1, okN: 0, allN: 0,
+    startErr: null, lastBar: 0, phBad: false, summary: null, lit: new Map(), sig: {}, events: []
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(GUIDE_STORE));
+    if (saved) { G.on = saved.on !== false; G.method = DJ_METHODS.find((m) => m.id === saved.method) || G.method; }
+  } catch { /* 저장소를 못 쓰는 브라우저 */ }
+  const guideSave = () => { try { localStorage.setItem(GUIDE_STORE, JSON.stringify({ on: G.on, method: G.method.id })); } catch { /* 무시 */ } };
+
+  const dk = (n) => `덱 ${n + 1}`;
+  const isOn = (d) => d.playing && !d.previewing; // 큐 미리 듣기는 재생으로 치지 않아요
+  const jo = (n, pair) => pair[n]; // 조사: 덱 1이·을 / 덱 2가·를
+  const gText = (s, n) => s.replaceAll("{out}이 ", `${dk(n)}${jo(n, "이가")} `).replaceAll("{in}이 ", `${dk(1 - n)}${jo(1 - n, "이가")} `).replaceAll("{in}", dk(1 - n)).replaceAll("{out}", dk(n));
+  const refId = (ref) => (ref === "xf" ? "xfader" : `${ref.startsWith("in.") ? 1 - G.out : G.out}.${ref.split(".")[1]}`);
+  const refVal = (v) => (v === "out" ? G.out : v === "in" ? 1 - G.out : v); // 크로스페이더: 덱 1 쪽 = 0, 덱 2 쪽 = 1
+  const ctlName = (id) => (id === "xfader" ? "크로스페이더" : `${dk(+id[0])} ${CTL_NAMES[id.slice(2)]}`);
+  const keyOf = (id, dir) => (id === "xfader" ? "← →" : DECK_KEYS[+id[0]][id.slice(2)]).split(" ")[dir < 0 ? 0 : 1];
+  const arrowOf = (kind, dir) => ({ knob: "↺↻", vfader: "↓↑", tempo: "↑↓", hfader: "←→" }[kind][dir < 0 ? 0 : 1]);
+
+  const guideSteps = () => [
+    { type: "load", label: "곡 준비" }, { type: "bpm", label: "BPM" }, { type: "set", label: "시작 세팅" },
+    { type: "play", label: "PLAY" }, ...G.method.steps.map((s) => ({ type: "move", ...s })), { type: "end", label: "마무리" }
+  ];
+  let gSteps = guideSteps();
+
+  function guideReset(out) {
+    Object.assign(G, { out, idx: 0, started: false, res: {}, first: -1, okN: 0, allN: 0, startErr: null, lastBar: 0, phBad: false });
+    G.events = out == null ? [] : [
+      { bar: G.method.start, label: `▶ ${dk(1 - out)} PLAY` }, ...G.method.steps.map((s) => ({ bar: s.from, label: s.label }))
+    ];
+  }
+  const guideEvents = (d) => (G.on && d.n === G.out ? G.events : []);
+
+  // 나가는 덱 정하기: 한 번 정하면 그 곡이 멈출 때까지 바꾸지 않아요
+  function guideOut() {
+    if (G.out != null) {
+      if (isOn(decks[G.out])) return;
+      if (G.started && isOn(decks[1 - G.out])) guideFinish();
+    }
+    const on = decks.filter(isOn);
+    const next = !on.length ? null : on.length === 1 ? on[0].n : +(on[1].pos() / on[1].duration > on[0].pos() / on[0].duration);
+    if (next !== G.out) guideReset(next);
+  }
+
+  function guideFinish() {
+    const n = G.method.steps.length;
+    const marks = G.method.steps.map((_, k) => G.res[PLAY_STEP + 1 + k] || "miss");
+    const good = marks.filter((m) => m === "ok").length;
+    const hold = G.allN ? Math.round((G.okN / G.allN) * 100) : 0;
+    const e = G.startErr;
+    const late = e > 0 ? "늦음" : "빠름", abs = Math.abs(e);
+    const start = e == null ? "—" : abs < 0.15 ? "정확해요" : abs < 4 ? `${abs.toFixed(1)}박 ${late}` : `${(abs / 4).toFixed(1)}마디 ${late}`;
+    const tip = e != null && abs >= 0.5 ? "다음에는 파형의 분홍색 PLAY 선이 가운데 오는 순간에 맞춰 눌러 보세요."
+      : hold < 80 ? "박자가 어긋난 시간이 길었어요. 재생한 직후에 박자 막대부터 확인해 보세요."
+      : marks.includes("miss") ? "놓친 조작이 있어요. 빛나는 조작부에 미리 손을 올려 두세요."
+      : marks.includes("fast") ? "조금 서둘렀어요. 노브의 분홍색 표시를 따라 천천히 움직여 보세요."
+      : "아주 좋아요! 다른 방법에도 도전해 보세요.";
+    G.summary = { title: `전환 완료! (${G.method.name})`, detail: `시작 타이밍 ${start} · 박자 유지 ${hold}% · 조작 ${good}/${n} — ${tip}`, until: performance.now() + 25000 };
+  }
+
+  const reachable = (t, o) => Math.abs(o.bpm / t.bpm - 1) <= RANGE;
+  function guidePick(o, i) {
+    if (i.track && i.track !== o.track && reachable(i.track, o)) return i.track;
+    const k = DJ_TRACKS.indexOf(o.track);
+    const rest = DJ_TRACKS.map((_, n) => DJ_TRACKS[(k + 1 + n) % DJ_TRACKS.length]).filter((t) => t !== o.track);
+    return rest.find((t) => reachable(t, o)) || rest[0];
+  }
+
+  // 조작부 하나를 target까지 움직이라는 안내 (chips = 글, hl = 화면에서 빛나는 조작부)
+  function guideMove(v, id, target, opts = {}) {
+    const c = ctl[id], diff = target - c.value, ok = Math.abs(diff) <= (opts.tol ?? TOL);
+    const dir = opts.dir || Math.sign(diff) || 1;
+    const far = opts.follow == null ? !ok : Math.abs(opts.follow - c.value) > 0.04 && Math.sign(opts.follow - c.value) === dir;
+    v.chips.push({ ctl: id, text: ctlName(id), arrow: arrowOf(c.kind, dir), key: keyOf(id, dir), ok });
+    if (!ok) v.hl.push({ el: c.el, tag: `${arrowOf(c.kind, dir)} ${keyOf(id, dir)}`, target: opts.follow ?? target, kind: c.kind, def: c.def, cls: opts.wait ? "wait" : far ? "" : "easy" });
+  }
+
+  function guideCount(v, bars) {
+    if (bars > 1) { v.big = String(Math.ceil(bars)); v.unit = "마디 뒤"; }
+    else if (bars > 0) { v.big = String(Math.ceil(bars * 4)); v.unit = "박 뒤"; v.state = "soon"; }
+    else { v.big = "지금"; v.unit = ""; v.state = "go"; }
+  }
+
+  function guideView(now) {
+    const v = { title: "", detail: "", big: "", unit: "", state: "", chips: [], hl: [], load: "", retry: false, cur: -1 };
+    if (G.summary && now > G.summary.until) G.summary = null;
+    if (G.out == null) {
+      const done = G.summary;
+      v.title = done ? done.title : "재생을 시작하면 안내가 나와요";
+      v.detail = done ? done.detail : "덱 1의 PLAY를 누르거나, 곡의 끝부분부터 바로 연습하려면 '전환 구간부터 연습'을 누르세요.";
+      v.big = done ? "✓" : "▶"; v.state = done ? "done" : "";
+      if (!done) v.chips.push({ text: "덱 1 PLAY", key: "V" });
+      return v;
+    }
+    const o = decks[G.out], i = decks[1 - G.out], m = G.method;
+    const bar = o.pos() / o.beat / 4;
+    if (bar < G.lastBar - 0.5) { guideReset(G.out); G.summary = null; } // 되감았으면 처음부터
+    G.lastBar = bar;
+
+    const on = isOn(i);
+    if (on && !G.started) { G.started = true; G.idx = PLAY_STEP + 1; G.summary = null; }
+    if (!on && G.started) { G.started = false; G.startErr = null; G.idx = 0; G.res = {}; G.first = -1; }
+
+    if (!G.started) return guidePrep(v, o, i, m, bar);
+
+    // 두 곡이 함께 나오는 동안: 박자 확인이 먼저예요
+    const iBeats = i.pos() / i.beat, oBeats = o.pos() / o.beat;
+    let ph = oBeats - iBeats;
+    ph -= Math.round(ph); // 양수면 들어오는 곡이 늦어요
+    if (i.pos() > 0) {
+      G.allN++;
+      if (Math.abs(ph) < 0.04) G.okN++;
+      if (G.startErr == null && iBeats > 1.5) G.startErr = oBeats - iBeats - m.start * 4;
+      G.phBad = Math.abs(ph) > (G.phBad ? 0.03 : 0.05);
+    }
+    const k = DECK_KEYS[i.n];
+    if (Math.abs(i.bpm - o.bpm) > 0.1) {
+      v.chips.push({ text: `BPM이 달라졌어요 · ${dk(i.n)} SYNC`, key: k.sync, warn: true });
+      v.hl.push({ el: i.ui.sync, cls: "" });
+    } else if (G.phBad) {
+      const key = k.nudge.split(" ")[ph > 0 ? 1 : 0];
+      v.chips.push({ text: `${dk(i.n)}${jo(i.n, "이가")} ${ph > 0 ? "늦어요 · 앞으로 밀기" : "빨라요 · 뒤로 밀기"}`, key, warn: true });
+      v.hl.push({ el: i.ui.jog, tag: `${ph > 0 ? "↻" : "↺"} ${key}`, cls: "" });
+    }
+
+    let st = gSteps[G.idx];
+    while (st.type === "move") {
+      const last = st.moves.every(([ref, , to]) => Math.abs(ctl[refId(ref)].value - refVal(to)) <= TOL);
+      if (bar >= st.from) {
+        if (last) {
+          // 너무 일찍 끝냈으면(미리 돌려 둠, 또는 천천히 해야 할 조작을 급하게 함) 따로 표시해요
+          const early = G.first !== G.idx || (st.to - st.from > 2 && bar < st.from + (st.to - st.from) * 0.4);
+          G.res[G.idx] = early ? "fast" : "ok";
+        } else if (bar > st.to + (st.grace ?? 1)) G.res[G.idx] = "miss";
+        else { G.first = G.idx; break; }
+        st = gSteps[++G.idx];
+      } else break;
+    }
+    v.cur = G.idx;
+    if (st.type === "end") {
+      const audible = o.vals.fader > 0.1 && Math.abs(ctl.xfader.value - i.n) > 0.1;
+      v.title = `${dk(o.n)}${jo(o.n, "을를")} 멈추면 끝이에요`;
+      v.detail = audible ? `아직 ${dk(o.n)} 소리가 남아 있어요. 다 내린 뒤에 멈추세요.` : "곡이 끝나면 저절로 멈추기도 해요. 이제 이 덱에 다음 곡을 준비하면 돼요.";
+      v.big = "✓"; v.state = "done";
+      v.chips.push({ text: `${dk(o.n)} PLAY (멈춤)`, key: DECK_KEYS[o.n].play });
+      v.hl.push({ el: o.ui.play, cls: "easy" });
+      return v;
+    }
+    const wait = bar < st.from;
+    const p = clamp((bar - st.from) / (st.to - st.from), 0, 1);
+    const len = st.to - st.from;
+    v.title = gText(st.title, G.out);
+    v.detail = `${Math.floor(st.from) + 1}마디부터 ${len >= 1 ? `${Math.round(len)}마디 동안` : "바로"} · ${gText(st.why, G.out)}`;
+    guideCount(v, st.from - bar);
+    if (!wait && len >= 1) { v.unit = `${Math.max(1, Math.ceil(st.to - bar))}마디 동안`; }
+    st.moves.forEach(([ref, from, to]) => {
+      const a = refVal(from), b = refVal(to);
+      guideMove(v, refId(ref), b, { dir: Math.sign(b - a), follow: wait ? null : a + (b - a) * p, wait });
+    });
+    return v;
+  }
+
+  // 다음 곡을 재생하기 전: 곡 준비 → BPM → 세팅 → PLAY
+  function guidePrep(v, o, i, m, bar) {
+    const k = DECK_KEYS[i.n], left = m.start - bar;
+    if (left > PREP_BARS) {
+      v.title = G.summary ? G.summary.title : `${dk(o.n)} 재생 중 · 아직 여유 있어요`;
+      v.detail = G.summary ? G.summary.detail : `${m.start - PREP_BARS + 1}마디부터 다음 곡 준비를 안내할게요. 기다리지 않으려면 '전환 구간부터 연습'을 누르세요.`;
+      v.big = String(Math.ceil(left - PREP_BARS)); v.unit = "마디 뒤 준비"; v.state = G.summary ? "done" : "";
+      return v;
+    }
+    const pick = guidePick(o, i);
+    const atStart = i.buffer && (i.pos() < 0.2 || i.pos() >= i.duration - 0.05);
+    const loaded = atStart && i.track === pick;
+    const bpmOk = loaded && Math.abs(i.bpm - o.bpm) <= 0.1;
+    const want = { xf: 0.5 };
+    ["out", "in"].forEach((side) => {
+      ["hi", "mid", "low", "filter"].forEach((c) => { want[`${side}.${c}`] = 0.5; });
+      want[`${side}.fader`] = 1;
+    });
+    Object.assign(want, m.set);
+    const off = Object.entries(want).filter(([ref, val]) => Math.abs(ctl[refId(ref)].value - refVal(val)) > TOL);
+    const setOk = !off.length;
+    G.idx = !loaded ? 0 : !bpmOk ? 1 : !setOk ? 2 : PLAY_STEP;
+    v.cur = G.idx;
+
+    if (left < -1) {
+      v.title = `${dk(i.n)}${jo(i.n, "을를")} 시작할 때를 놓쳤어요`;
+      v.detail = `${m.start + 1}마디 첫 박에 재생했어야 해요. 괜찮아요, 다시 해 볼 수 있어요.`;
+      v.big = "!"; v.state = "miss"; v.retry = true;
+      return v;
+    }
+    guideCount(v, left);
+    if (G.idx === 0) {
+      const same = i.track === pick;
+      v.title = i.loading ? "곡을 만드는 중이에요" : same ? `${dk(i.n)}${jo(i.n, "을를")} 곡의 처음으로 되돌리세요` : `${dk(i.n)}에 다음 곡을 불러오세요`;
+      v.detail = `BPM을 맞출 수 있는 곡이어야 해요. 추천: ${pick.title} (${pick.bpm} BPM). 아래 버튼이나 트랙 목록에서 불러와요.`;
+      v.load = i.loading ? "" : `${dk(i.n)}에 ${pick.title} ${same ? "다시 " : ""}불러오기`;
+      const btn = ui.library.querySelector(`[data-load="${i.n}|${pick.id}"]`);
+      if (btn) v.hl.push({ el: btn, cls: "" });
+    } else if (G.idx === 1) {
+      const t = o.bpm / i.track.bpm - 1;
+      v.title = `${dk(i.n)}의 BPM을 ${o.bpm.toFixed(1)}로 맞추세요`;
+      v.detail = `지금 ${i.bpm.toFixed(1)} BPM이에요. SYNC를 누르면 한 번에 맞고, 연습하려면 템포 슬라이더로 직접 맞춰 보세요.`;
+      v.chips.push({ text: `${dk(i.n)} SYNC`, key: k.sync });
+      v.hl.push({ el: i.ui.sync, cls: "" });
+      if (Math.abs(t) <= RANGE) guideMove(v, `${i.n}.tempo`, t / (2 * RANGE) + 0.5, { tol: 0.002 });
+      else {
+        v.detail = `속도 차이가 커서 맞출 수 없어요. 먼저 ${dk(o.n)}의 템포를 가운데로 돌려 주세요.`;
+        guideMove(v, `${o.n}.tempo`, 0.5);
+      }
+    } else if (G.idx === 2) {
+      v.title = "빛나는 조작부를 분홍색 표시에 맞추세요";
+      v.detail = `${m.name}의 시작 세팅이에요. ${m.set["in.low"] === 0 ? "저음이 겹치지 않게 LOW를 미리 빼 둬요." : m.set["in.filter"] ? "필터를 닫아 얇은 소리로 시작해요." : "크로스페이더를 지금 나오는 덱 쪽에 두면 다음 곡이 들리지 않아요."}`;
+      off.forEach(([ref, val]) => guideMove(v, refId(ref), refVal(val)));
+    } else {
+      v.title = left > 0.12 ? `${m.start + 1}마디 첫 박에 ${dk(i.n)} PLAY` : `지금! ${dk(i.n)} PLAY`;
+      v.detail = i.synced ? "SYNC가 켜져 있어서 조금 빗나가도 박자는 맞춰 줘요. 4·3·2·1을 세다가 누르세요." : "4·3·2·1을 세다가 첫 박에 누르고, 바로 박자 막대를 확인하세요.";
+      v.chips.push({ text: `${dk(i.n)} PLAY`, key: k.play });
+      v.hl.push({ el: i.ui.play, cls: left > 1 ? "wait" : "" });
+    }
+    return v;
+  }
+
+  function guideRender(v) {
+    const put = (key, html, fn) => { if (G.sig[key] !== html) { G.sig[key] = html; fn(html); } };
+    put("big", v.big, (t) => { ui.gBig.textContent = t; });
+    put("unit", v.unit, (t) => { ui.gUnit.textContent = t; });
+    put("title", v.title, (t) => { ui.gTitle.textContent = t; });
+    put("detail", v.detail, (t) => { ui.gDetail.textContent = t; });
+    put("state", v.state, (t) => { ui.gLive.dataset.state = t; });
+    put("chips", v.chips.map((c) => `<button type="button" data-go="${c.ctl || ""}" class="dg-chip${c.ok ? " ok" : ""}${c.warn ? " warn" : ""}">${c.ok ? "✓ " : ""}${c.text}${c.arrow && !c.ok ? ` ${c.arrow}` : ""}${c.key && !c.ok ? ` ${kbd(c.key)}` : ""}</button>`).join(""),
+      (t) => { ui.gChips.innerHTML = t; });
+    put("load", v.load, (t) => { ui.gLoad.hidden = !t; ui.gLoad.textContent = t; });
+    put("retry", String(v.retry), (t) => { ui.gRetry.hidden = t !== "true"; });
+    put("steps", gSteps.map((s, n) => {
+      const st = G.res[n] || (n === v.cur ? "now" : n < v.cur ? "ok" : "");
+      return `<li class="${st}">${{ ok: "✓ ", fast: "△ ", miss: "✗ " }[st] || ""}${s.label}</li>`;
+    }).join(""), (t) => {
+        ui.gSteps.innerHTML = t;
+        const cur = ui.gSteps.querySelector(".now");
+        if (cur) ui.gSteps.scrollLeft = cur.offsetLeft - (ui.gSteps.clientWidth - cur.offsetWidth) / 2;
+      });
+
+    // 조작부 빛내기
+    const next = new Map(v.hl.map((h) => [h.el, h]));
+    G.lit.forEach((_, el) => { if (!next.has(el)) el.classList.remove("gl", "wait", "easy", "has-mark"); });
+    next.forEach((h, el) => {
+      el.classList.add("gl");
+      el.classList.toggle("wait", h.cls === "wait");
+      el.classList.toggle("easy", h.cls === "easy");
+      el.classList.toggle("has-mark", h.target != null);
+      const tag = el.querySelector(".gl-tag");
+      if (tag) setText(tag, h.tag || "");
+      if (h.target == null) return;
+      if (h.kind === "knob") el.style.setProperty("--ga", `${-135 + h.target * 270}deg`);
+      else el.style.setProperty("--gp", h.kind === "vfader" ? 1 - h.target : h.target);
+    });
+    G.lit = next;
+  }
+
+  function guideTick(now) {
+    if (!G.on) return;
+    guideOut();
+    guideRender(guideView(now));
+  }
+
+  function guideSetOn(on) {
+    G.on = on;
+    if (!on) { G.lit.forEach((_, el) => el.classList.remove("gl", "wait", "easy", "has-mark")); G.lit = new Map(); }
+    guideReset(null);
+    guideSave();
+    guideSyncUi();
+  }
+
+  function guideSetMethod(m) {
+    G.method = m;
+    gSteps = guideSteps();
+    guideReset(null);
+    G.summary = null;
+    guideSave();
+    guideSyncUi();
+  }
+
+  function guideSyncUi() {
+    ui.gLive.hidden = !G.on;
+    ui.gSteps.hidden = !G.on;
+    ui.gToggle.textContent = G.on ? "가이드 켜짐" : "가이드 꺼짐";
+    ui.gToggle.setAttribute("aria-pressed", G.on);
+    root.querySelectorAll("[data-method]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.method === G.method.id);
+      b.setAttribute("aria-pressed", b.dataset.method === G.method.id);
+    });
+    setText(ui.gSummary, G.method.summary);
+  }
+
+  // 전환 준비 구간으로 바로 이동: 조작부를 기본값으로 돌리고, 나가는 곡을 준비 시작 마디부터 재생해요
+  function guideJump() {
+    const n = G.out ?? (decks[0].buffer ? 0 : 1), o = decks[n], i = decks[1 - n];
+    if (!o.buffer) { toast("곡을 만드는 중이에요. 잠시 후 다시 눌러 주세요."); return; }
+    ensureCtx();
+    if (!G.on) guideSetOn(true);
+    decks.forEach((d) => { d.previewing = false; d.pause(); ["hi", "mid", "low", "filter", "fader"].forEach((c) => { const x = ctl[`${d.n}.${c}`]; x.set(x.def); }); });
+    ctl.xfader.set(0.5);
+    i.seek(0);
+    i.cue = 0;
+    G.summary = null;
+    guideReset(n);
+    o.seek((G.method.start - PREP_BARS) * 4 * o.beat);
+    o.play(false);
+  }
+
+  // ---------- 조작키 설명 ----------
+  function showInfo(id, n) {
+    const info = DJ_INFO.find((x) => x.id === id);
+    const sig = `${id}|${n}`;
+    if (!info || G.sig.info === sig) return;
+    G.sig.info = sig;
+    const keys = !info.keys ? "" : info.keys.both ? info.keys.both : n == null ? "" : DECK_KEYS[n][info.keys];
+    ui.gInfo.innerHTML = `<b>${n == null ? "" : `${dk(n)} `}${info.name}</b>${keys ? ` ${kbd(keys.replace(" ", "</kbd> <kbd>"))}` : ""} ${info.what}`;
+  }
+
+  function infoFromEl(el) {
+    if (!el.closest || !el.closest(".dj-stage, .dj-waves")) return;
+    const info = DJ_INFO.find((x) => el.closest(x.sel));
+    if (!info) return;
+    const deck = el.closest("[data-deck]");
+    showInfo(info.id, deck ? +deck.dataset.deck : null);
+  }
+
+  function flashInfo(info) {
+    const els = [...root.querySelectorAll(info.sel)].filter((el) => el.closest(".dj-stage, .dj-waves"));
+    if (!els.length) return;
+    els[0].closest(".dj-waves, .dj-console").scrollIntoView({ behavior: "smooth", block: "start" });
+    els.forEach((el) => el.classList.add("flash-ctl"));
+    setTimeout(() => els.forEach((el) => el.classList.remove("flash-ctl")), 2600);
+    showInfo(info.id, null);
+  }
+
+  const guideHtml = () => `
+    <div class="dj-guide">
+      <div class="dg-bar">
+        <b class="dg-name">전환 가이드</b>
+        <div class="dg-methods">${DJ_METHODS.map((m) => `<button type="button" data-method="${m.id}">${m.name}<small>${m.level}</small></button>`).join("")}</div>
+        <button type="button" class="dg-jump">전환 구간부터 연습</button>
+        <button type="button" class="dg-toggle"></button>
+      </div>
+      <p class="dg-summary"></p>
+    </div>
+    <div class="dg-sticky">
+      <div class="dg-live">
+        <div class="dg-count"><b></b><span></span></div>
+        <div class="dg-body">
+          <strong class="dg-title" aria-live="polite"></strong>
+          <p class="dg-detail"></p>
+          <div class="dg-actions"><div class="dg-chips"></div><button type="button" class="dg-load" hidden></button><button type="button" class="dg-retry" hidden>다시 연습</button></div>
+        </div>
+      </div>
+      <ol class="dg-steps"></ol>
+      <p class="dg-info">조작부에 마우스를 올리거나 만지면, 또는 키를 누르면 무슨 역할인지 여기에 나와요.</p>
+    </div>`;
+
+  const plain = (s) => s.replaceAll("{in}", "다음 곡").replaceAll("{out}", "지금 곡");
+  const methodsHtml = () => DJ_METHODS.map((m) => `
+    <article class="dm">
+      <h4>${m.name}<small>${m.level}</small></h4>
+      <p>${m.summary}</p>
+      <ol>
+        <li><b>${m.start + 1}마디</b> 다음 곡 PLAY</li>
+        ${m.steps.map((s) => `<li><b>${Math.floor(s.from) + 1}마디</b> ${plain(s.title)}</li>`).join("")}
+      </ol>
+      <p class="dj-note"><b>느낌</b> ${m.sound}<br><b>요령</b> ${m.tip}</p>
+      <button type="button" class="dm-try" data-try="${m.id}">이 방법 연습하기</button>
+    </article>`).join("");
+
+  const infoHtml = () => ["믹서", "박자", "재생", "화면"].map((g) => `
+    <h4 class="di-group">${g}</h4>
+    <div class="di-grid">${DJ_INFO.filter((x) => x.group === g).map((x) => {
+      const keys = !x.keys ? "" : x.keys.both ? `<span>${kbd(x.keys.both.replace(" ", "</kbd> <kbd>"))}</span>`
+        : [0, 1].map((n) => `<span>${dk(n)} ${kbd(DECK_KEYS[n][x.keys].replace(" ", "</kbd> <kbd>"))}</span>`).join("");
+      return `<button type="button" class="di" data-info="${x.id}"><b>${x.name}</b>${keys ? `<span class="di-keys">${keys}</span>` : ""}<span>${x.what}</span><span class="di-use">${x.use}</span></button>`;
+    }).join("")}</div>`).join("");
+
+  function guideBind() {
+    const q = (s) => root.querySelector(s);
+    Object.assign(ui, {
+      gLive: q(".dg-live"), gBig: q(".dg-count b"), gUnit: q(".dg-count span"), gTitle: q(".dg-title"), gDetail: q(".dg-detail"),
+      gChips: q(".dg-chips"), gLoad: q(".dg-load"), gRetry: q(".dg-retry"), gSteps: q(".dg-steps"), gInfo: q(".dg-info"),
+      gToggle: q(".dg-toggle"), gSummary: q(".dg-summary")
+    });
+    root.querySelectorAll("[data-method]").forEach((b) => b.addEventListener("click", () => guideSetMethod(DJ_METHODS.find((m) => m.id === b.dataset.method))));
+    root.querySelectorAll("[data-try]").forEach((b) => b.addEventListener("click", () => {
+      guideSetMethod(DJ_METHODS.find((m) => m.id === b.dataset.try));
+      guideJump();
+      q(".dj-console").scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+    root.querySelectorAll("[data-info]").forEach((b) => b.addEventListener("click", () => flashInfo(DJ_INFO.find((x) => x.id === b.dataset.info))));
+    q(".dg-jump").addEventListener("click", guideJump);
+    ui.gRetry.addEventListener("click", guideJump);
+    ui.gToggle.addEventListener("click", () => guideSetOn(!G.on));
+    ui.gLoad.addEventListener("click", () => {
+      if (G.out == null) return;
+      const o = decks[G.out], i = decks[1 - G.out];
+      load(i, guidePick(o, i));
+    });
+    // 안내 글을 누르면 그 조작부가 보이게 화면을 옮겨요 (휴대폰에서 조작부가 화면 밖에 있을 때)
+    ui.gChips.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-go]");
+      if (!b) return;
+      const el = b.dataset.go ? ctl[b.dataset.go].el : G.lit.keys().next().value;
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    root.addEventListener("pointerover", (e) => infoFromEl(e.target));
+    root.addEventListener("pointerdown", (e) => infoFromEl(e.target));
+    guideSyncUi();
   }
 
   // ---------- 노브·페이더 ----------
@@ -500,7 +941,7 @@ const DJ = (() => {
     if (id === "xfader") { applyXfader(); return; }
     if (id === "master") { if (ctx) masterGain.gain.setTargetAtTime(v * 1.25, ctx.currentTime, 0.01); return; }
     const d = decks[+id[0]], key = id.slice(2);
-    if (key === "tempo") { d.change(() => { d.tempo = (v - 0.5) * 2 * RANGE; }); return; }
+    if (key === "tempo") { d.change(() => { d.tempo = (v - 0.5) * 2 * RANGE; }); decks.forEach((x) => { x.synced = false; }); return; }
     d.vals[key] = v;
     if (ctx) d.apply(key);
   }
@@ -546,10 +987,10 @@ const DJ = (() => {
   const knob = (id, label, keys) => `
     <div class="knob-wrap">
       <span class="ctl-label">${label}</span>
-      <div class="knob" data-ctl="${id}" data-kind="knob"><div class="knob-dial"><i></i></div></div>
+      <div class="knob" data-ctl="${id}" data-kind="knob"><div class="knob-dial"><i></i></div><i class="gl-mark"></i><em class="gl-tag"></em></div>
       ${keys ? kbd(keys) : ""}
     </div>`;
-  const fader = (id, kind, cls) => `<div class="fader ${cls}" data-ctl="${id}" data-kind="${kind}"><div class="fader-slot"></div><div class="fader-cap"></div></div>`;
+  const fader = (id, kind, cls) => `<div class="fader ${cls}" data-ctl="${id}" data-kind="${kind}"><div class="fader-slot"></div><div class="fader-cap"></div><i class="gl-mark"></i><em class="gl-tag"></em></div>`;
 
   const deckHtml = (n) => {
     const k = DECK_KEYS[n];
@@ -568,8 +1009,8 @@ const DJ = (() => {
           ${kbd(k.tempo)}
         </div>
         <div class="jog-col">
-          <div class="jog"><div class="jog-platter"><i class="jog-mark"></i><div class="jog-center"><b class="jog-bpm">—</b><small>BPM</small></div></div></div>
-          <span class="jog-hint">재생 중: 돌리면 잠깐 빨라지거나 느려져요 · 멈춤: 위치 이동 ${kbd(k.nudge)}</span>
+          <div class="jog"><em class="gl-tag"></em><div class="jog-platter"><i class="jog-mark"></i><div class="jog-center"><b class="jog-bpm">—</b><small>BPM</small></div></div></div>
+          <span class="jog-hint">재생 중: 박자 밀기 · 멈춤: 위치 이동 ${kbd(k.nudge)}</span>
         </div>
       </div>
       <div class="deck-bottom">
@@ -598,12 +1039,6 @@ const DJ = (() => {
     </div>`;
   };
 
-  const keyRows = [
-    ["HI (고음) 줄이기 / 키우기", "hi"], ["MID (중음)", "mid"], ["LOW (저음)", "low"],
-    ["FILTER (왼쪽: 고음 깎기 · 오른쪽: 저음 깎기)", "filter"], ["채널 볼륨 내리기 / 올리기", "fader"],
-    ["템포 느리게 / 빠르게", "tempo"], ["박자 밀기: 뒤로 / 앞으로", "nudge"]
-  ];
-
   function build() {
     root.innerHTML = `
       <div class="dj-head">
@@ -616,6 +1051,8 @@ const DJ = (() => {
         <div class="dj-phase"><span class="dj-phase-label">박자</span><div class="dj-phase-bar"><i class="dj-phase-mark"></i></div><span class="dj-phase-text"></span></div>
         <div class="dj-wave-row"><span class="dj-wave-tag">2</span><canvas class="dj-wave"></canvas></div>
       </div>
+      <div class="dj-console">
+      ${guideHtml()}
       <div class="dj-stage-wrap">
         <div class="dj-stage">
           <div class="dj-toast" role="status"></div>
@@ -631,33 +1068,23 @@ const DJ = (() => {
           ${deckHtml(1)}
         </div>
       </div>
+      </div>
       <div class="dj-bottom">
         <div class="dj-panel dj-library">
           <h3>트랙 목록</h3>
           <table><thead><tr><th>트랙</th><th>BPM</th><th>길이</th><th>불러오기</th></tr></thead><tbody></tbody></table>
           <p class="dj-note">모든 트랙은 64마디 구조예요: 인트로 16 · 빌드업 16 · 브레이크 8 · 드롭 16 · 아웃트로 8. 박자가 정확히 맞춰져 있어서 BPM만 맞으면 박이 겹쳐요.</p>
         </div>
-        <div class="dj-panel dj-help">
-          <h3>키보드 조작</h3>
-          <table class="keys">
-            <thead><tr><th></th><th>덱 1</th><th>덱 2</th></tr></thead>
-            <tbody>
-              ${keyRows.map(([label, k]) => `<tr><td>${label}</td><td>${kbd(DECK_KEYS[0][k].replace(" ", "</kbd> / <kbd>"))}</td><td>${kbd(DECK_KEYS[1][k].replace(" ", "</kbd> / <kbd>"))}</td></tr>`).join("")}
-              <tr><td>CUE / PLAY / SYNC</td><td>${kbd("C")} ${kbd("V")} ${kbd("G")}</td><td>${kbd("N")} ${kbd("M")} ${kbd("H")}</td></tr>
-              <tr><td>크로스페이더</td><td colspan="2">${kbd("←")} / ${kbd("→")}</td></tr>
-            </tbody>
-          </table>
-          <p class="dj-note">키를 누르고 있으면 노브가 계속 돌아가요. <b>Shift</b>+조절 키를 누르면 가운데(기본값)로 돌아가요. 마우스로는 드래그하거나 휠을 굴리고, 더블클릭하면 기본값으로 돌아가요. 한글 입력 상태여도 작동해요.</p>
-          <h3>믹싱 연습 순서</h3>
-          <ol class="dj-steps">
-            <li>덱 1을 재생하고, 덱 2에 다음 곡을 불러와요.</li>
-            <li>덱 2의 템포(${kbd("7")} ${kbd("8")})로 BPM을 덱 1과 똑같이 맞춰요. 어려우면 SYNC(${kbd("H")})를 눌러요.</li>
-            <li>덱 1이 새 구간(16마디 단위, 빨간 박자선)에 들어갈 때 덱 2를 재생하고, 박자 막대가 가운데 오도록 ${kbd("J")} ${kbd("K")}나 조그로 맞춰요.</li>
-            <li>덱 2의 LOW를 끝까지 내린 채(${kbd("L")}) 채널 볼륨을 올려요(${kbd("I")}).</li>
-            <li>다음 구간이 시작될 때 저음을 바꿔요: 덱 1 LOW ↓(${kbd("A")}), 덱 2 LOW ↑(${kbd(";")}).</li>
-            <li>덱 1의 볼륨을 내려서(${kbd("E")}) 마무리하고, 덱 1에 다음 곡을 불러와 반복해요.</li>
-          </ol>
+        <div class="dj-panel dj-methods">
+          <h3>곡을 넘기는 4가지 방법</h3>
+          <p class="dj-note">어떤 방법이든 원칙은 같아요. ① BPM을 같게 ② 새 구간의 첫 박에 시작 ③ 저음은 한 번에 한 곡만. 아래 마디 숫자는 나가는 곡 기준이에요.</p>
+          <div class="dm-grid">${methodsHtml()}</div>
         </div>
+      </div>
+      <div class="dj-panel dj-info">
+        <h3>조작키 설명</h3>
+        <p class="dj-note">카드를 누르면 화면에서 그 조작부가 반짝여요. 키를 <b>누르고 있으면</b> 계속 움직이고, <b>Shift</b>+조절 키는 기본값으로 되돌려요. 크로스페이더는 <b>Shift+화살표</b>를 누르면 그쪽 끝으로 단번에 넘어가요. 마우스는 드래그하거나 휠을 굴리고, 더블클릭하면 기본값이에요. 한글 입력 상태여도 작동해요.</p>
+        ${infoHtml()}
       </div>`;
 
     Object.assign(ui, {
@@ -671,6 +1098,7 @@ const DJ = (() => {
       masterMeter: root.querySelector(".mx-meter.master"),
       library: root.querySelector(".dj-library tbody")
     });
+    guideBind();
 
     root.querySelectorAll("[data-ctl]").forEach((el) => {
       const id = el.dataset.ctl;
@@ -684,7 +1112,7 @@ const DJ = (() => {
       d.ui = {
         root: el, title: q(".dd-title"), bpm: q(".dd-bpm b"), time: q(".dd-time"), remain: q(".dd-remain"),
         bar: q(".dd-bar"), section: q(".dd-section"), overview: q(".dd-overview"), tempoVal: q(".tempo-val"),
-        jogMark: q(".jog-mark"), jogBpm: q(".jog-bpm"), play: q(".play"), cue: q(".cue"), sync: q(".sync"),
+        jog: q(".jog"), jogMark: q(".jog-mark"), jogBpm: q(".jog-bpm"), play: q(".play"), cue: q(".cue"), sync: q(".sync"),
         pads: [...el.querySelectorAll(".pad")], loading: q(".deck-loading"),
         meter: root.querySelector(`.mx-ch[data-deck="${d.n}"] .mx-meter`)
       };
@@ -743,9 +1171,11 @@ const DJ = (() => {
     if (!k && !b) return;
     e.preventDefault();
     ensureCtx();
+    showInfo(b ? b[1] : k[0] === "xfader" ? "xfader" : k[0].slice(2), b ? b[0] : k[0] === "xfader" ? null : +k[0][0]);
     if (b) { if (!e.repeat) press(decks[b[0]], b[1], true, e); return; }
     if (e.shiftKey) {
-      // Shift+조절 키: 기본값으로 되돌리기
+      // Shift+화살표: 크로스페이더를 그쪽 끝으로 단번에 / Shift+조절 키: 기본값으로 되돌리기
+      if (k[0] === "xfader") { ctl.xfader.set(k[1] < 0 ? 0 : 1); return; }
       if (ctl[k[0]]) ctl[k[0]].set(ctl[k[0]].def);
       return;
     }
