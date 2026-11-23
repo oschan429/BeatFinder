@@ -1,0 +1,73 @@
+/* ---------- 신청곡 ---------- */
+.req { max-width: 760px; margin: 0 auto; padding-top: 4px; animation: rise .4s both; }
+.req-head { text-align: center; margin-bottom: 20px; }
+.req-head h2 { font-size: clamp(24px, 4vw, 34px); line-height: 1.2; margin: 0 0 8px; }
+.req-head .sub { margin-bottom: 0; }
+
+.req-form {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px; display: flex; flex-direction: column; gap: 10px;
+}
+.req-form input {
+  width: 100%; min-width: 0; font: inherit; font-size: 16px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; outline: 0;
+  transition: border-color .15s;
+}
+.req-form input:focus { border-color: var(--accent-2); }
+.req-form input::placeholder { color: #6d6b86; }
+.req-search { position: relative; }
+.req-search .suggestions { top: calc(100% + 6px); max-height: 380px; }
+.req-sug-manual { color: var(--muted); font-size: 14px; justify-content: center; }
+.req-sug-manual b { color: var(--accent); }
+
+.req-picked { display: flex; align-items: center; gap: 12px; background: var(--panel-2); border: 1px solid rgba(124, 245, 212, .45); border-radius: 12px; padding: 8px 12px 8px 8px; }
+.req-picked img, .req-picked .thumb-ph { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+.req-manual, .req-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.req-extra { grid-template-columns: 1fr 2fr; }
+.req-manual-hint { margin: -2px 0 0; color: var(--muted); font-size: 13px; }
+.req-textbtn { font: inherit; font-size: 13px; font-weight: 700; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; flex-shrink: 0; }
+.req-form .btn-primary { align-self: flex-end; }
+.req-form .btn-primary:disabled { opacity: .6; cursor: default; transform: none; }
+.req-status { margin: 0; font-size: 14px; color: var(--accent); text-align: right; }
+.req-status.bad { color: var(--hot); }
+
+.req-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 32px 0 12px; flex-wrap: wrap; }
+.req-list-head h3 { margin: 0; font-size: 18px; }
+.req-list-head h3 small { color: var(--muted); font-weight: 500; font-size: 14px; margin-left: 4px; }
+.req-sort { display: flex; gap: 6px; }
+
+.req-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.req-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px;
+}
+.req-item > img, .req-item > .thumb-ph { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+.req-ph { display: grid; place-items: center; color: var(--muted); font-size: 20px; }
+.req-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.req-text b, .req-text > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.req-text > span { color: var(--muted); font-size: 13px; }
+.req-text small { color: #6d6b86; font-size: 12px; margin-top: 2px; }
+.req-text small em { color: var(--accent); font-style: normal; }
+.req-msg { margin: 4px 0 0; font-size: 13px; color: #cfcde3; overflow-wrap: anywhere; }
+.req-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.req-like {
+  font: inherit; font-size: 14px; font-weight: 700; color: var(--muted); cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px;
+  transition: color .15s, border-color .15s;
+}
+.req-like:hover { color: var(--hot); border-color: var(--hot); }
+.req-like.on { color: var(--hot); border-color: rgba(255, 95, 162, .5); cursor: default; }
+.req-item.played { opacity: .55; }
+.req-item.flash { animation: req-flash 1.4s; }
+@keyframes req-flash { 0%, 60% { border-color: var(--hot); box-shadow: 0 0 0 3px rgba(255, 95, 162, .25); } }
+.req-empty { text-align: center; color: var(--muted); padding: 32px 12px; background: var(--panel); border: 1px dashed var(--line); border-radius: 14px; }
+
+@media (max-width: 640px) {
+  .req-form { padding: 14px; }
+  .req-manual, .req-extra { grid-template-columns: 1fr; }
+  .req-form .btn-primary { align-self: stretch; }
+  .req-item { gap: 10px; padding: 8px 10px; }
+  .req-item > img, .req-item > .thumb-ph { width: 46px; height: 46px; }
+  .req-actions .btn-play { padding: 8px; }
+  .req-actions .btn-play .label { display: none; }
+}

@@ -544,7 +544,7 @@ function wireCards(container) {
 }
 
 function show(sections) {
-  ["#hero", "#fallback", "#loading", "#results", "#guide", "#dj"].forEach((id) => { $(id).hidden = true; });
+  ["#hero", "#fallback", "#loading", "#results", "#guide", "#dj", "#requests"].forEach((id) => { $(id).hidden = true; });
   sections.forEach((id) => { $(id).hidden = false; });
   document.body.classList.toggle("compact", sections.length > 1);
   document.body.classList.remove("searching");
@@ -786,6 +786,7 @@ function goHome(e) {
   if (location.hash) history.pushState(null, "", location.pathname + location.search);
   setTab("find");
   DJ.leave();
+  REQ.leave();
   runId++;
   stopAudio();
   input.value = "";
@@ -836,19 +837,24 @@ function renderGuide(key) {
   wireCards($("#guideBody"));
 }
 
-// #genres(또는 #genres/techno)면 장르 설명, #dj면 DJ 연습을 보여줘요
+// #genres(또는 #genres/techno)면 장르 설명, #dj면 DJ 연습, #requests면 신청곡을 보여줘요
 function route() {
   const m = location.hash.match(/^#genres(?:\/([\w-]+))?/);
   const dj = location.hash === "#dj";
-  setTab(m ? "genres" : dj ? "dj" : "find");
+  const req = location.hash === "#requests";
+  setTab(m ? "genres" : dj ? "dj" : req ? "requests" : "find");
   if (!dj) DJ.leave();
-  if (!m && !dj) return false;
+  if (!req) REQ.leave();
+  if (!m && !dj && !req) return false;
   runId++;
   stopAudio();
   hideSuggestions();
   if (dj) {
     show(["#dj"]);
     DJ.enter();
+  } else if (req) {
+    show(["#requests"]);
+    REQ.enter();
   } else {
     renderGuide(m[1]);
     show(["#guide"]);

@@ -8,6 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20261122">
   <link rel="stylesheet" href="dj.css?v=20261122">
+  <link rel="stylesheet" href="requests.css?v=20261123">
 </head>
 <body>
   <div class="bg-glow" aria-hidden="true"></div>
@@ -20,6 +21,7 @@
       <a href="#" data-view="find" id="findTab">곡 추천</a>
       <a href="#genres" data-view="genres">장르 설명</a>
       <a href="#dj" data-view="dj">DJ 연습</a>
+      <a href="#requests" data-view="requests">신청곡</a>
     </nav>
   </header>
 
@@ -92,6 +94,9 @@
 
     <!-- DJ 연습 (내용은 dj.js가 만들어요) -->
     <section class="dj" id="dj" hidden></section>
+
+    <!-- 신청곡 (내용은 requests.js가 만들어요) -->
+    <section class="req" id="requests" hidden></section>
   </main>
 
   <footer class="foot">BeatFinder · 미리듣기 제공: iTunes Search API · 전체 듣기는 Spotify / YouTube에서</footer>
@@ -103,6 +108,7 @@
   <script src="dj-tracks.js?v=20261122"></script>
   <script src="dj-guide.js?v=20261122"></script>
   <script src="dj.js?v=20261122"></script>
+  <script src="requests.js?v=20261123"></script>
   <script src="analyzer.js?v=20261122"></script>
   <script src="app.js?v=20261122"></script>
 </body>
