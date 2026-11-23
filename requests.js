@@ -3,7 +3,7 @@
 // Firebase 콘솔 → 프로젝트 설정에서 "프로젝트 ID"를 아래에 넣으면 동작해요. (보안 규칙은 firestore.rules)
 const REQ_FIREBASE = {
   projectId: "beatfinder-oschan429",
-  apiKey: ""   // 비워 둬도 돼요. 넣으면 Firebase 웹 API 키로 요청해요.
+  apiKey: "AIzaSyA9RaBVCu5MvssuWTsrfy9mGBA5IAMUbrY",   // 프로젝트 설정 → 내 앱(웹)의 apiKey. 관리자 로그인에만 써요. (공개돼도 괜찮은 값이에요)
 };
 
 const REQ = (() => {
@@ -14,7 +14,68 @@ const REQ = (() => {
 
   const ready = () => !!REQ_FIREBASE.projectId;
   const base = () => `https://firestore.googleapis.com/v1/projects/${REQ_FIREBASE.projectId}/databases/(default)/documents`;
-  const withKey = (url) => REQ_FIREBASE.apiKey ? `${url}?key=${encodeURIComponent(REQ_FIREBASE.apiKey)}` : url;
+
+  // ---------- 관리자 로그인 (Firebase 이메일/비밀번호) ----------
+  // 수정·삭제 권한은 firestore.rules에서 관리자 UID로만 허용해요. 화면의 버튼은 편의용이에요.
+  const ADMIN_KEY = "bf_req_admin_v1";
+  let admin = null;   // { email, idToken, refreshToken, exp }
+  try { admin = JSON.parse(localStorage.getItem(ADMIN_KEY) || "null"); } catch { admin = null; }
+  const saveAdmin = () => { try { admin ? localStorage.setItem(ADMIN_KEY, JSON.stringify(admin)) : localStorage.removeItem(ADMIN_KEY); } catch { /* 무시 */ } };
+  const authUrl = (u) => `${u}?key=${encodeURIComponent(REQ_FIREBASE.apiKey)}`;
+
+  const LOGIN_ERRORS = {
+    INVALID_LOGIN_CREDENTIALS: "이메일이나 비밀번호가 맞지 않아요.",
+    INVALID_PASSWORD: "이메일이나 비밀번호가 맞지 않아요.",
+    EMAIL_NOT_FOUND: "이메일이나 비밀번호가 맞지 않아요.",
+    INVALID_EMAIL: "이메일 형식이 아니에요.",
+    USER_DISABLED: "사용이 중지된 계정이에요.",
+    OPERATION_NOT_ALLOWED: "Firebase에서 이메일/비밀번호 로그인이 꺼져 있어요."
+  };
+
+  async function signIn(email, password) {
+    const res = await fetch(authUrl("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, returnSecureToken: true })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const code = String(d.error && d.error.message || "").split(" ")[0];
+      throw new Error(LOGIN_ERRORS[code] || (code.startsWith("TOO_MANY") ? "시도가 너무 많아요. 잠시 뒤에 다시 해 주세요." : "로그인하지 못했어요."));
+    }
+    admin = { email: d.email, idToken: d.idToken, refreshToken: d.refreshToken, exp: Date.now() + (+d.expiresIn - 60) * 1000 };
+    saveAdmin();
+  }
+
+  function signOut() { admin = null; saveAdmin(); }
+
+  // 로그인 토큰은 1시간짜리라, 만료되면 저장해 둔 refreshToken으로 새로 받아요.
+  async function adminToken() {
+    if (!admin) return null;
+    if (Date.now() < admin.exp) return admin.idToken;
+    try {
+      const res = await fetch(authUrl("https://securetoken.googleapis.com/v1/token"), {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: admin.refreshToken })
+      });
+      if (!res.ok) throw new Error("refresh");
+      const d = await res.json();
+      admin = { ...admin, idToken: d.id_token, refreshToken: d.refresh_token, exp: Date.now() + (+d.expires_in - 60) * 1000 };
+      saveAdmin();
+      return admin.idToken;
+    } catch {
+      signOut();
+      return null;
+    }
+  }
+
+  async function headers() {
+    const h = { "Content-Type": "application/json" };
+    const t = await adminToken();
+    if (t) h.Authorization = `Bearer ${t}`;
+    return h;
+  }
 
   let root, items = [], sort = "hot", picked = null, loading = false, built = false;
   let sugTimer = null, sugReq = 0, sugItems = [];
@@ -29,9 +90,9 @@ const REQ = (() => {
   const val = (v) => v == null ? null : "stringValue" in v ? v.stringValue : "integerValue" in v ? +v.integerValue : "timestampValue" in v ? v.timestampValue : null;
 
   async function fetchList() {
-    const res = await fetch(withKey(`${base()}:runQuery`), {
+    const res = await fetch(`${base()}:runQuery`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await headers(),
       body: JSON.stringify({ structuredQuery: {
         from: [{ collectionId: "requests" }],
         orderBy: [{ field: { fieldPath: "createdAt" }, direction: "DESCENDING" }],
@@ -53,9 +114,9 @@ const REQ = (() => {
   }
 
   async function commit(writes) {
-    const res = await fetch(withKey(`${base()}:commit`), {
+    const res = await fetch(`${base()}:commit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await headers(),
       body: JSON.stringify({ writes })
     });
     if (!res.ok) throw new Error(`commit ${res.status}`);
@@ -80,6 +141,14 @@ const REQ = (() => {
   const addLike = (docName) => commit([{
     transform: { document: docName, fieldTransforms: [{ fieldPath: "likes", increment: { integerValue: "1" } }] }
   }]);
+
+  // 관리자 전용 (규칙에서 관리자 UID만 허용)
+  const setReqStatus = (docName, status) => commit([{
+    update: { name: docName, fields: { status: str(status) } },
+    updateMask: { fieldPaths: ["status"] },
+    currentDocument: { exists: true }
+  }]);
+  const deleteReq = (docName) => commit([{ delete: docName }]);
 
   // ---------- 곡 검색 (애플뮤직 / 아이폰은 디저) ----------
   async function searchSongs(q) {
@@ -129,7 +198,8 @@ const REQ = (() => {
           <button type="button" class="chip toggle" data-sort="refresh" aria-label="새로고침">↻</button>
         </div>
       </div>
-      <ul class="req-list" id="reqList"></ul>`;
+      <ul class="req-list" id="reqList"></ul>
+      <div class="req-admin" id="reqAdmin"></div>`;
 
     const input = $("#reqSearch"), sug = $("#reqSug");
 
@@ -170,7 +240,30 @@ const REQ = (() => {
     $("#reqList").addEventListener("click", (e) => {
       const b = e.target.closest("[data-like]");
       if (b) like(b.dataset.like);
+      const a = e.target.closest("[data-act]");
+      if (a) adminAct(a.dataset.act, a.closest("[data-id]").dataset.id, a);
     });
+    $("#reqAdmin").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-admin]");
+      if (!b) return;
+      if (b.dataset.admin === "open") renderAdmin(true);
+      else if (b.dataset.admin === "cancel") renderAdmin(false);
+      else if (b.dataset.admin === "logout") { signOut(); renderAdmin(false); renderList(); }
+    });
+    $("#reqAdmin").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.target, msg = form.querySelector(".req-admin-msg"), btn = form.querySelector("button[type=submit]");
+      btn.disabled = true; msg.textContent = "";
+      try {
+        await signIn(form.email.value.trim(), form.password.value);
+        renderAdmin(false);
+        renderList();
+      } catch (err) {
+        msg.textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+    renderAdmin(false);
     built = true;
   }
 
@@ -288,6 +381,42 @@ const REQ = (() => {
     catch { liked.delete(id); saveLiked(); r.likes--; renderList(); }
   }
 
+  function renderAdmin(formOpen) {
+    const box = $("#reqAdmin");
+    if (!REQ_FIREBASE.apiKey) { box.innerHTML = ""; return; }
+    if (admin) {
+      box.innerHTML = `<p class="req-admin-on">🔑 관리자 모드 · ${esc(admin.email)} <button type="button" class="req-textbtn" data-admin="logout">로그아웃</button></p>`;
+    } else if (formOpen) {
+      box.innerHTML = `
+        <form class="req-admin-form" autocomplete="on">
+          <input name="email" type="email" placeholder="관리자 이메일" autocomplete="username" required>
+          <input name="password" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+          <button type="submit" class="btn-primary">로그인</button>
+          <button type="button" class="req-textbtn" data-admin="cancel">닫기</button>
+          <p class="req-admin-msg"></p>
+        </form>`;
+      box.querySelector("input").focus();
+    } else {
+      box.innerHTML = `<button type="button" class="req-admin-link" data-admin="open">관리자</button>`;
+    }
+  }
+
+  async function adminAct(act, id, btn) {
+    const r = items.find((x) => x.id === id);
+    if (!r || !admin) return;
+    if (act === "delete" && !confirm(`"${r.title}" 신청곡을 지울까요? 되돌릴 수 없어요.`)) return;
+    btn.disabled = true;
+    try {
+      if (act === "delete") { await deleteReq(r.name); items = items.filter((x) => x !== r); }
+      else { await setReqStatus(r.name, act); r.status = act; }
+      renderList();
+    } catch {
+      btn.disabled = false;
+      alert(admin ? "처리하지 못했어요. 관리자 계정이 맞는지, Firebase 규칙이 최신인지 확인해 주세요." : "로그인이 만료됐어요. 다시 로그인해 주세요.");
+      renderAdmin(false);
+    }
+  }
+
   function highlight(id) {
     const li = $("#reqList").querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!li) return;
@@ -334,6 +463,12 @@ const REQ = (() => {
           ${r.preview ? `<button class="btn-play" data-preview="${esc(pid)}" style="--p:0" aria-label="${esc(r.title)} 30초 미리듣기"><span class="play-ring"></span><span class="label">30초 미리듣기</span></button>` : ""}
           <button type="button" class="req-like${on ? " on" : ""}" data-like="${esc(r.id)}" ${on ? "disabled" : ""} aria-label="나도 듣고 싶어요">♥ <span>${r.likes}</span></button>
         </div>
+        ${admin ? `<div class="req-admin-acts">
+          ${r.status === "played"
+            ? `<button type="button" data-act="new">↺ 되돌리기</button>`
+            : `<button type="button" data-act="played" class="ok">✓ 틀었어요</button>`}
+          <button type="button" data-act="delete" class="del">삭제</button>
+        </div>` : ""}
       </li>`;
     }).join("");
     wireCards(list);

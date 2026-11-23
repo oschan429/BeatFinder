@@ -71,3 +71,32 @@
   .req-actions .btn-play { padding: 8px; }
   .req-actions .btn-play .label { display: none; }
 }
+
+/* 관리자 모드 */
+.req-item { flex-wrap: wrap; }
+.req-admin-acts { flex-basis: 100%; display: flex; justify-content: flex-end; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.req-admin-acts button {
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+}
+.req-admin-acts button.ok { color: var(--accent); border-color: rgba(124, 245, 212, .45); }
+.req-admin-acts button.del { color: var(--hot); border-color: rgba(255, 95, 162, .45); }
+.req-admin-acts button:disabled { opacity: .5; cursor: default; }
+.req-item.played .req-admin-acts { opacity: 1; }
+.req-admin { margin-top: 28px; text-align: center; }
+.req-admin-link { font: inherit; font-size: 12px; color: #5f5d78; background: none; border: 0; cursor: pointer; padding: 4px 8px; }
+.req-admin-link:hover { color: var(--muted); }
+.req-admin-on { margin: 0; font-size: 13px; color: var(--muted); }
+.req-admin-form {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px;
+  max-width: 520px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px;
+}
+.req-admin-form input {
+  flex: 1 1 180px; min-width: 0; font: inherit; font-size: 16px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; outline: 0;
+}
+.req-admin-form input:focus { border-color: var(--accent-2); }
+.req-admin-form .btn-primary { padding: 9px 18px; }
+.req-admin-form .btn-primary:disabled { opacity: .6; }
+.req-admin-msg { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--hot); min-height: 0; }
+.req-admin-msg:empty { display: none; }
