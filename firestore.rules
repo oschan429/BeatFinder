@@ -1,33 +1,30 @@
-rules_version = '2';
+rules_version = "2";
 // BeatFinder 신청곡 보안 규칙
 // - 누구나 목록을 읽고 새 신청곡을 쓸 수 있어요 (형식·길이 검사)
 // - 일반 방문자는 ♥(likes)를 1 올리는 것만 가능해요
 // - "틀었어요" 표시(status)와 삭제는 관리자 계정(UID)만 가능해요
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAdmin() { return request.auth != null && request.auth.uid == 'efKgJnOur8Vj3s6RRfvqupzCH183'; }
+    function isAdmin() { return request.auth != null && request.auth.uid == "efKgJnOur8Vj3s6RRfvqupzCH183"; }
     function okText(v, max) { return v is string && v.size() <= max; }
-    function okUrl(v) { return v is string && v.size() <= 500 && (v == '' || v.matches('https://.*')); }
+    function okUrl(v) { return v is string && v.size() <= 500 && (v == "" || v.matches("https://.*")); }
+    function d() { return request.resource.data; }
 
     match /requests/{id} {
       allow read: if true;
 
-      allow create: if request.resource.data.keys().hasOnly(
-            ['title', 'artist', 'name', 'message', 'art', 'preview', 'url', 'likes', 'status', 'createdAt'])
-        && okText(request.resource.data.title, 200) && request.resource.data.title.size() > 0
-        && okText(request.resource.data.artist, 200)
-        && okText(request.resource.data.name, 30)
-        && okText(request.resource.data.message, 200)
-        && okUrl(request.resource.data.art)
-        && okUrl(request.resource.data.preview)
-        && okUrl(request.resource.data.url)
-        && request.resource.data.likes == 0
-        && request.resource.data.status == 'new'
-        && request.resource.data.createdAt == request.time;
+      allow create: if d().keys().hasOnly(["title", "artist", "name", "message", "art", "preview", "url", "likes", "status", "createdAt"])
+        && okText(d().title, 200) && d().title.size() > 0
+        && okText(d().artist, 200)
+        && okText(d().name, 30)
+        && okText(d().message, 200)
+        && okUrl(d().art) && okUrl(d().preview) && okUrl(d().url)
+        && d().likes == 0
+        && d().status == "new"
+        && d().createdAt == request.time;
 
       allow update: if isAdmin()
-        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
-            && request.resource.data.likes == resource.data.likes + 1);
+        || (d().diff(resource.data).affectedKeys().hasOnly(["likes"]) && d().likes == resource.data.likes + 1);
 
       allow delete: if isAdmin();
     }
